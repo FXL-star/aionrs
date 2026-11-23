@@ -244,3 +244,30 @@ async fn test_load_all_skills_deduplicates() {
     let count = names.iter().filter(|&&n| n == "my-skill").count();
     assert_eq!(count, 1, "skill should appear exactly once after dedup");
 }
+
+// --- load_skills_from_dirs ---
+
+#[tokio::test]
+async fn load_skills_from_dirs_scans_direct_skill_roots() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("view").join("skills");
+    // A direct skills root: {root}/{name}/SKILL.md, with NO `.aionrs` parent.
+    write_skill(&root, "cron/SKILL.md", "---\ndescription: d\n---\n");
+    write_skill(&root, "db/migrate/SKILL.md", "---\ndescription: nested\n---\n");
+
+    let skills = load_skills_from_dirs(&[root]).await;
+
+    let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"cron"), "direct root skill must load, got {names:?}");
+    assert!(
+        names.contains(&"db:migrate"),
+        "nested namespace must load, got {names:?}"
+    );
+    assert_eq!(skills.len(), 2);
+}
+
+#[tokio::test]
+async fn load_skills_from_dirs_skips_missing_dirs() {
+    let result = load_skills_from_dirs(&[PathBuf::from("/nonexistent/view/skills")]).await;
+    assert!(result.is_empty());
+}

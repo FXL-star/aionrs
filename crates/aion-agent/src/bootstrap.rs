@@ -10,7 +10,7 @@ use aion_mcp::tool_proxy::register_mcp_tools;
 use aion_mcp::transport::McpHeaderProvider;
 use aion_memory::paths::{ENTRYPOINT_NAME, auto_memory_dir};
 use aion_providers::{LlmProvider, create_provider};
-use aion_skills::loader::load_all_skills;
+use aion_skills::loader::{load_all_skills, load_skills_from_dirs};
 use aion_skills::permissions::SkillPermissionChecker;
 use aion_skills::types::SkillMetadata;
 use aion_tools::edit::EditTool;
@@ -24,7 +24,7 @@ use aion_tools::tool_search::ToolSearchTool;
 use aion_tools::view_image::ViewImageTool;
 use aion_tools::write::WriteTool;
 use anyhow::Result;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::context::{SystemPromptCache, build_system_prompt_with_shell_and_tool_policy};
 use crate::context_usage::PromptUsage;
@@ -150,6 +150,10 @@ impl AgentBootstrap {
     }
 
     /// Add extra directories to scan for skills.
+    ///
+    /// Each directory is treated as a skills root directly containing
+    /// `{name}/SKILL.md` entries — unlike the CLI `--add-dir` flag, which is a
+    /// project root containing a `.aionrs/skills/` subdirectory.
     pub fn extra_skill_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
         self.extra_skill_dirs = dirs;
         self
@@ -283,7 +287,27 @@ impl AgentBootstrap {
     }
 
     async fn load_skills(&self, workspace: &Path, mcp_manager: Option<&McpManager>) -> Vec<SkillMetadata> {
-        load_all_skills(workspace, &self.extra_skill_dirs, false, mcp_manager).await
+        let mut skills = load_all_skills(workspace, &[], false, mcp_manager).await;
+        if self.extra_skill_dirs.is_empty() {
+            return skills;
+        }
+
+        let extra = load_skills_from_dirs(&self.extra_skill_dirs).await;
+        debug!(
+            target: "aion_agent",
+            dirs = ?self.extra_skill_dirs,
+            extra_count = extra.len(),
+            "agent bootstrap: loaded skills from extra skill dirs",
+        );
+
+        // Bundled / MCP / user / project / legacy skills already in `skills`
+        // win over the extra dirs (first-wins by name).
+        for skill in extra {
+            if !skills.iter().any(|existing| existing.name == skill.name) {
+                skills.push(skill);
+            }
+        }
+        skills
     }
 
     fn configure_system_prompt(&mut self, environment: &BootstrapEnvironment, skills: &[SkillMetadata]) -> PromptUsage {

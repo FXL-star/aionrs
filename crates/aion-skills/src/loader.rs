@@ -124,6 +124,27 @@ pub async fn load_all_skills(
     deduplicate_by_name(deduplicate(all))
 }
 
+/// Load skills from directories that ARE skills roots: each directory is
+/// scanned directly for `{name}/SKILL.md` entries (nested namespaces included),
+/// with no `.aionrs/skills` indirection.
+///
+/// This is the channel for host-owned skill views — for example AionUi's
+/// per-conversation `session-skills/{user}/{conversation}/skills` directory,
+/// which holds `{name}` symlinks to real skill sources and does not follow the
+/// project-root layout that [`load_all_skills`]'s `add_dirs` expects. Nonexistent
+/// directories are skipped.
+pub async fn load_skills_from_dirs(dirs: &[PathBuf]) -> Vec<SkillMetadata> {
+    let mut all: Vec<LoadedSkill> = Vec::new();
+    let futures: Vec<_> = dirs
+        .iter()
+        .map(|d| load_skills_from_dir(d, SkillSource::Project, LoadedFrom::Skills))
+        .collect();
+    for batch in join_all(futures).await {
+        all.extend(batch);
+    }
+    deduplicate_by_name(deduplicate(all))
+}
+
 /// Call `bundled::prepare_bundled_skills()` and wrap results as `LoadedSkill`.
 ///
 /// Each bundled skill is assigned a virtual path `<bundled:name>` for
